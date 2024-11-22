@@ -9,13 +9,16 @@ class SineWaveApp(QtWidgets.QWidget):
         super().__init__()
         self.setWindowTitle("Dual Waveform Generator")
 
-        # parameters 1
+        self.sampling_rate = 48000
+
+        # paramters 1
         self.frequency_1 = 440.0
         self.mod_freq_1 = 5.0
         self.mod_depth_1 = 0.5
         self.volume_1 = 0.5
         self.pan_1 = 0.5
         self.waveform_1 = "sine"
+        self.mute_1 = False
 
         # parameters 2
         self.frequency_2 = 220.0
@@ -24,8 +27,11 @@ class SineWaveApp(QtWidgets.QWidget):
         self.volume_2 = 0.5
         self.pan_2 = 0.5
         self.waveform_2 = "sine"
+        self.mute_2 = False
 
         self.running = False
+        self.time_offset = 0
+        self.scrolling_plot = False  # fixed plot default
 
         self.init_ui()
 
@@ -51,6 +57,10 @@ class SineWaveApp(QtWidgets.QWidget):
         self.stop_button.clicked.connect(self.stop)
         button_layout.addWidget(self.stop_button)
 
+        self.toggle_plot_button = QtWidgets.QPushButton("Toggle Plot Mode")
+        self.toggle_plot_button.clicked.connect(self.toggle_plot_mode)
+        button_layout.addWidget(self.toggle_plot_button)
+
         main_layout.addLayout(button_layout)
 
         # plot Layout
@@ -58,13 +68,16 @@ class SineWaveApp(QtWidgets.QWidget):
         self.canvas = FigureCanvas(self.fig)
         self.line, = self.ax.plot([], [])
         self.ax.set_ylim(-1.5, 1.5)
-        self.ax.set_xlim(0, 0.02)
+        self.ax.set_xlim(0, 0.05)
         self.ax.set_xlabel("Time in s")
         self.ax.set_ylabel("Amplitude")
         main_layout.addWidget(self.canvas)
 
         self.setLayout(main_layout)
-        self.update_plot()
+
+        self.timer = QtCore.QTimer(self)
+        self.timer.timeout.connect(self.update_plot)
+        self.timer.start(30)  
 
     def add_signal_controls(self, layout, signal_number):
         control_group = QtWidgets.QGroupBox(f"Signal {signal_number} Einstellungen")
@@ -72,7 +85,7 @@ class SineWaveApp(QtWidgets.QWidget):
 
         self.signal_controls[signal_number] = {}
 
-        # freq Slider
+        # Frequency Slider
         freq_slider = self.create_slider(20, 2000, getattr(self, f'frequency_{signal_number}'), decimals=0)
         freq_label = QtWidgets.QLabel(f"{getattr(self, f'frequency_{signal_number}')} Hz")
         freq_slider.valueChanged.connect(lambda value, lbl=freq_label: lbl.setText(f"{value} Hz"))
@@ -80,7 +93,7 @@ class SineWaveApp(QtWidgets.QWidget):
         control_layout.addRow(f"Frequenz {signal_number} (Hz):", self.wrap_widget_with_label(freq_label, freq_slider))
         self.signal_controls[signal_number]['freq_slider'] = freq_slider
 
-        # mod freq Slider
+        # mod freq slider
         mod_freq_slider = self.create_slider(0.1, 50, getattr(self, f'mod_freq_{signal_number}'), decimals=1)
         mod_freq_label = QtWidgets.QLabel(f"{getattr(self, f'mod_freq_{signal_number}')} Hz")
         mod_freq_slider.valueChanged.connect(lambda value, lbl=mod_freq_label: lbl.setText(f"{value / 10:.1f} Hz"))
@@ -88,7 +101,7 @@ class SineWaveApp(QtWidgets.QWidget):
         control_layout.addRow(f"Modulationsfrequenz {signal_number} (Hz):", self.wrap_widget_with_label(mod_freq_label, mod_freq_slider))
         self.signal_controls[signal_number]['mod_freq_slider'] = mod_freq_slider
 
-        # mod_depth Slider
+        # mod depth slider
         mod_depth_slider = self.create_slider(0, 1, getattr(self, f'mod_depth_{signal_number}'), decimals=2)
         mod_depth_label = QtWidgets.QLabel(f"{getattr(self, f'mod_depth_{signal_number}'):.2f}")
         mod_depth_slider.valueChanged.connect(lambda value, lbl=mod_depth_label: lbl.setText(f"{value / 100:.2f}"))
@@ -96,7 +109,7 @@ class SineWaveApp(QtWidgets.QWidget):
         control_layout.addRow(f"Modulationstiefe {signal_number}:", self.wrap_widget_with_label(mod_depth_label, mod_depth_slider))
         self.signal_controls[signal_number]['mod_depth_slider'] = mod_depth_slider
 
-        # volume Dial
+        # volume knob
         volume_dial = QtWidgets.QDial()
         volume_dial.setRange(0, 100)
         volume_dial.setValue(int(getattr(self, f'volume_{signal_number}') * 100))
@@ -106,7 +119,7 @@ class SineWaveApp(QtWidgets.QWidget):
         control_layout.addRow(f"Lautstärke {signal_number}:", self.wrap_widget_with_label(volume_label, volume_dial))
         self.signal_controls[signal_number]['volume_dial'] = volume_dial
 
-        # pan Dial
+        # pan knob
         pan_dial = QtWidgets.QDial()
         pan_dial.setRange(0, 100)
         pan_dial.setValue(int(getattr(self, f'pan_{signal_number}') * 100))
@@ -116,7 +129,7 @@ class SineWaveApp(QtWidgets.QWidget):
         control_layout.addRow(f"Panning {signal_number} (L-R):", self.wrap_widget_with_label(pan_label, pan_dial))
         self.signal_controls[signal_number]['pan_dial'] = pan_dial
 
-        # waveform Selection
+        # waveform selection
         waveform_buttons = QtWidgets.QButtonGroup(self)
         waveform_layout = QtWidgets.QHBoxLayout()
         for waveform in ["sine", "square", "triangle", "sawtooth"]:
@@ -128,6 +141,12 @@ class SineWaveApp(QtWidgets.QWidget):
         waveform_buttons.buttonClicked.connect(self.update_plot)
         control_layout.addRow(f"Wellenform {signal_number}:", waveform_layout)
         self.signal_controls[signal_number]['waveform_buttons'] = waveform_buttons
+
+        # mute checkbox
+        mute_checkbox = QtWidgets.QCheckBox("Mute")
+        mute_checkbox.stateChanged.connect(lambda state, sn=signal_number: self.toggle_mute(sn, state))
+        control_layout.addRow(mute_checkbox)
+        self.signal_controls[signal_number]['mute_checkbox'] = mute_checkbox
 
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
@@ -146,34 +165,43 @@ class SineWaveApp(QtWidgets.QWidget):
         slider.valueChanged.connect(self.update_plot)
         return slider
 
+    def generate_signal(self, t, signal_number):
+        controls = self.signal_controls[signal_number]
+        if controls['mute_checkbox'].isChecked():
+            return np.zeros_like(t)
+
+        freq = controls['freq_slider'].value()
+        mod_freq = controls['mod_freq_slider'].value() / 10
+        mod_depth = controls['mod_depth_slider'].value() / 100
+        volume = controls['volume_dial'].value() / 100
+        waveform = controls['waveform_buttons'].checkedButton().text()
+
+        modulator = 1 + mod_depth * np.sin(2 * np.pi * mod_freq * t)
+        if waveform == "sine":
+            wave = np.sin(2 * np.pi * freq * t) * modulator
+        elif waveform == "square":
+            wave = np.sign(np.sin(2 * np.pi * freq * t)) * modulator
+        elif waveform == "triangle":
+            wave = (2 * np.abs(2 * ((t * freq) % 1) - 1) - 1) * modulator
+        elif waveform == "sawtooth":
+            wave = (2 * (t * freq % 1) - 1) * modulator
+        else:
+            wave = np.sin(2 * np.pi * freq * t) * modulator
+
+        return wave * volume
+
     def update_plot(self):
-        fs = 48000
-        t = np.linspace(0, 0.02, int(0.02 * fs), endpoint=False)
+        fs = self.sampling_rate
+        if self.scrolling_plot:
+            t = np.linspace(self.time_offset, self.time_offset + 0.05, int(0.05 * fs), endpoint=False)
+            self.time_offset += 0.0005  # for scrolling effect
+        else:
+            t = np.linspace(0, 0.05, int(0.05 * fs), endpoint=False)
 
         combined_wave = np.zeros_like(t)
 
         for signal_number in [1, 2]:
-            controls = self.signal_controls[signal_number]
-            freq = controls['freq_slider'].value()
-            mod_freq = controls['mod_freq_slider'].value() / 10
-            mod_depth = controls['mod_depth_slider'].value() / 100
-            volume = controls['volume_dial'].value() / 100
-            waveform = controls['waveform_buttons'].checkedButton().text()
-
-            modulator = 1 + mod_depth * np.sin(2 * np.pi * mod_freq * t)
-            if waveform == "sine":
-                wave = np.sin(2 * np.pi * freq * t) * modulator
-            elif waveform == "square":
-                wave = np.sign(np.sin(2 * np.pi * freq * t)) * modulator
-            elif waveform == "triangle":
-                wave = (2 * np.abs(2 * ((t * freq) % 1) - 1) - 1) * modulator
-            elif waveform == "sawtooth":
-                wave = (2 * (t * freq % 1) - 1) * modulator
-            else:
-                wave = np.sin(2 * np.pi * freq * t) * modulator
-
-            wave *= volume
-            combined_wave += wave
+            combined_wave += self.generate_signal(t, signal_number)
 
         combined_wave = np.clip(combined_wave, -1, 1)
 
@@ -181,12 +209,22 @@ class SineWaveApp(QtWidgets.QWidget):
         self.ax.set_xlim(t[0], t[-1])
         self.canvas.draw()
 
+    def toggle_plot_mode(self):
+        self.scrolling_plot = not self.scrolling_plot
+        if not self.scrolling_plot:
+            self.time_offset = 0
+        self.update_plot()
+
+    def toggle_mute(self, signal_number, state):
+        self.signal_controls[signal_number]['mute_checkbox'].setChecked(state)
+        self.update_plot()
+
     def audio_callback(self, outdata, frames, time, status):
         if not self.running:
             outdata[:] = np.zeros((frames, 2))
             return
 
-        fs = 48000
+        fs = self.sampling_rate
         t = (np.arange(frames) + self.sample_offset) / fs
         self.sample_offset += frames
 
@@ -194,27 +232,8 @@ class SineWaveApp(QtWidgets.QWidget):
         right_channel = np.zeros_like(t)
 
         for signal_number in [1, 2]:
-            controls = self.signal_controls[signal_number]
-            freq = controls['freq_slider'].value()
-            mod_freq = controls['mod_freq_slider'].value() / 10
-            mod_depth = controls['mod_depth_slider'].value() / 100
-            volume = controls['volume_dial'].value() / 100
-            pan = controls['pan_dial'].value() / 100
-            waveform = controls['waveform_buttons'].checkedButton().text()
-
-            modulator = 1 + mod_depth * np.sin(2 * np.pi * mod_freq * t)
-            if waveform == "sine":
-                wave = np.sin(2 * np.pi * freq * t) * modulator
-            elif waveform == "square":
-                wave = np.sign(np.sin(2 * np.pi * freq * t)) * modulator
-            elif waveform == "triangle":
-                wave = (2 * np.abs(2 * ((t * freq) % 1) - 1) - 1) * modulator
-            elif waveform == "sawtooth":
-                wave = (2 * (t * freq % 1) - 1) * modulator
-            else:
-                wave = np.sin(2 * np.pi * freq * t) * modulator
-
-            wave *= volume
+            wave = self.generate_signal(t, signal_number)
+            pan = self.signal_controls[signal_number]['pan_dial'].value() / 100
             left_channel += wave * (1 - pan)
             right_channel += wave * pan
 
@@ -230,7 +249,7 @@ class SineWaveApp(QtWidgets.QWidget):
             self.running = True
             self.sample_offset = 0
             self.stream = sd.OutputStream(
-                samplerate=48000,
+                samplerate=self.sampling_rate,
                 channels=2,
                 callback=self.audio_callback,
                 blocksize=1024
