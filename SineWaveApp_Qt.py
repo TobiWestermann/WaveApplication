@@ -9,7 +9,6 @@ class SineWaveApp(QtWidgets.QWidget):
         super().__init__()
         self.setWindowTitle("Waveform Generator")
 
-        # GUI Parameters
         self.frequency = 440.0
         self.mod_freq = 5.0
         self.mod_depth = 0.5
