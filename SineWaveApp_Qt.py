@@ -3,6 +3,8 @@ import numpy as np
 import sounddevice as sd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+import os
+import soundfile as sf
 
 class SineWaveApp(QtWidgets.QWidget):
     def __init__(self):
@@ -19,7 +21,9 @@ class SineWaveApp(QtWidgets.QWidget):
         self.running = False
         self.time_offset = 0
         self.scrolling_plot = False  # fixed plot default
-        
+        self.recording = False
+        self.recorded_frames = []
+
         self.init_ui()
 
     def init_ui(self):
@@ -49,6 +53,12 @@ class SineWaveApp(QtWidgets.QWidget):
         self.stop_button.setToolTip("Stop audio playback")
         self.stop_button.clicked.connect(self.stop)
         button_layout.addWidget(self.stop_button)
+
+        self.record_button = QtWidgets.QPushButton("Record")
+        self.record_button.setToolTip("Start/stop recording the audio")
+        self.record_button.setCheckable(True)
+        self.record_button.toggled.connect(self.toggle_recording)
+        button_layout.addWidget(self.record_button)
 
         self.toggle_plot_button = QtWidgets.QPushButton("Toggle Plot Mode")
         self.toggle_plot_button.setToolTip("Toggle between scrolling and fixed plot modes")
@@ -253,12 +263,11 @@ class SineWaveApp(QtWidgets.QWidget):
         fs = self.sampling_rate
         t = (np.arange(frames) + self.sample_offset) / fs
         self.sample_offset += frames
-
         
         left_channel = np.zeros_like(t)
         right_channel = np.zeros_like(t)
 
-        for signal_number in self.signal_parameters.keys():
+        for signal_number in list(self.signal_parameters.keys()):
             wave = self.generate_signal(t, signal_number)
             pan = self.signal_controls[signal_number]['pan_dial'].value() / 100
             left_channel += wave * (1 - pan)
@@ -271,7 +280,30 @@ class SineWaveApp(QtWidgets.QWidget):
 
         outdata[:] = stereo_wave
 
-    def create_default_signal_parameters(self, frequency=440.0):
+        if self.recording:
+            self.recorded_frames.append(stereo_wave.copy())
+
+    def toggle_recording(self, state):
+        if state:
+            self.recorded_frames = []
+            self.recording = True
+            self.record_button.setText("Stop Recording")
+        else:
+            self.recording = False
+            self.record_button.setText("Record")
+            if self.running:
+                self.stop()
+            if self.recorded_frames:
+                self.save_recording()
+
+
+    def save_recording(self):
+        filename, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save Recording", os.getenv("HOME"), "WAV Files (*.wav)")
+        if filename:
+            data = np.concatenate(self.recorded_frames, axis=0)
+            sf.write(filename, data, self.sampling_rate)
+
+    def create_default_signal_parameters(self, frequency=220.0):
         return {
             'frequency': frequency,
             'mod_freq': 5.0,
@@ -283,16 +315,19 @@ class SineWaveApp(QtWidgets.QWidget):
         }
 
     def add_new_signal(self):
+        if len(self.signal_parameters) >= 8:
+            QtWidgets.QMessageBox.warning(self, "Limit Reached", "You cannot add more than 8 signals.")
+            return
+
         if self.signal_parameters:
             new_signal_number = max(self.signal_parameters.keys()) + 1
             new_frequency = 440.0 + (new_signal_number - 1) * 220.0
         else:
             new_signal_number = 1
             new_frequency = 440.0
+
         self.signal_parameters[new_signal_number] = self.create_default_signal_parameters(new_frequency)
         self.add_signal_tab(new_signal_number)
-
-
 
     def remove_signal_tab(self, index):
         signal_number = list(self.signal_parameters.keys())[index]
@@ -317,6 +352,8 @@ class SineWaveApp(QtWidgets.QWidget):
             self.running = False
             self.stream.stop()
             self.stream.close()
+            if self.recording:
+                self.toggle_recording(False)
 
     
 if __name__ == "__main__":
