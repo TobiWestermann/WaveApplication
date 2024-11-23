@@ -38,6 +38,17 @@ class SineWaveApp(QtWidgets.QWidget):
     def init_ui(self):
         main_layout = QtWidgets.QVBoxLayout(self)
 
+        self.setStyleSheet("""
+            background-color: #2b2b2b;
+            color: #f0f0f0;
+            QSlider::groove:horizontal { background: #444; }
+            QSlider::handle:horizontal { background: #00bcd4; }
+            QPushButton { background-color: #444; border: none; color: #00bcd4; }
+            QGroupBox { border: 1px solid #00bcd4; margin-top: 10px; }
+            QLabel { color: #f0f0f0; }
+            QCheckBox { color: #f0f0f0; }
+        """)
+
         # control layouts
         self.signal_controls = {}
         controls_layout = QtWidgets.QHBoxLayout()
@@ -49,15 +60,18 @@ class SineWaveApp(QtWidgets.QWidget):
         button_layout = QtWidgets.QHBoxLayout()
         self.start_button = QtWidgets.QPushButton()
         self.start_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaPlay))
+        self.start_button.setToolTip("Start audio playback")
         self.start_button.clicked.connect(self.start)
         button_layout.addWidget(self.start_button)
 
         self.stop_button = QtWidgets.QPushButton()
         self.stop_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaStop))
+        self.stop_button.setToolTip("Stop audio playback")
         self.stop_button.clicked.connect(self.stop)
         button_layout.addWidget(self.stop_button)
 
         self.toggle_plot_button = QtWidgets.QPushButton("Toggle Plot Mode")
+        self.toggle_plot_button.setToolTip("Toggle between scrolling and fixed plot modes")
         self.toggle_plot_button.clicked.connect(self.toggle_plot_mode)
         button_layout.addWidget(self.toggle_plot_button)
 
@@ -85,34 +99,57 @@ class SineWaveApp(QtWidgets.QWidget):
 
         self.signal_controls[signal_number] = {}
 
-        # Frequency Slider
-        freq_slider = self.create_slider(20, 2000, getattr(self, f'frequency_{signal_number}'), decimals=0)
-        freq_label = QtWidgets.QLabel(f"{getattr(self, f'frequency_{signal_number}')} Hz")
-        freq_slider.valueChanged.connect(lambda value, lbl=freq_label: lbl.setText(f"{value} Hz"))
-        freq_slider.valueChanged.connect(self.update_plot)
-        control_layout.addRow(f"Frequenz {signal_number} (Hz):", self.wrap_widget_with_label(freq_label, freq_slider))
+        # Frequency Slider + SpinBox
+        freq_slider = self.create_slider(20, 20000, getattr(self, f'frequency_{signal_number}'), decimals=0)
+        freq_spinbox = QtWidgets.QSpinBox()
+        freq_spinbox.setRange(20, 20000)
+        freq_spinbox.setValue(int(getattr(self, f'frequency_{signal_number}')))
+        freq_spinbox.setFixedWidth(80)
+        freq_slider.setToolTip("Adjust the frequency of the signal")
+        freq_spinbox.setToolTip("Set the frequency of the signal")
+        freq_slider.valueChanged.connect(lambda value: freq_spinbox.setValue(value))
+        freq_spinbox.valueChanged.connect(lambda value: freq_slider.setValue(value))
+        freq_spinbox.valueChanged.connect(self.update_plot)
+        control_layout.addRow(f"Frequenz {signal_number} (Hz):", self.wrap_widget_with_slider_and_spinbox(freq_slider, freq_spinbox))
         self.signal_controls[signal_number]['freq_slider'] = freq_slider
 
-        # mod freq slider
-        mod_freq_slider = self.create_slider(0.1, 50, getattr(self, f'mod_freq_{signal_number}'), decimals=1)
-        mod_freq_label = QtWidgets.QLabel(f"{getattr(self, f'mod_freq_{signal_number}')} Hz")
-        mod_freq_slider.valueChanged.connect(lambda value, lbl=mod_freq_label: lbl.setText(f"{value / 10:.1f} Hz"))
-        mod_freq_slider.valueChanged.connect(self.update_plot)
-        control_layout.addRow(f"Modulationsfrequenz {signal_number} (Hz):", self.wrap_widget_with_label(mod_freq_label, mod_freq_slider))
+        # mod freq slider + SpinBox
+        mod_freq_slider = self.create_slider(0, 50, getattr(self, f'mod_freq_{signal_number}'), decimals=1)
+        mod_freq_spinbox = QtWidgets.QDoubleSpinBox()
+        mod_freq_spinbox.setRange(0, 50.0)
+        mod_freq_spinbox.setSingleStep(0.1)
+        mod_freq_spinbox.setDecimals(1)
+        mod_freq_spinbox.setValue(getattr(self, f'mod_freq_{signal_number}'))
+        mod_freq_spinbox.setFixedWidth(80)
+        mod_freq_slider.setToolTip("Adjust the modulation frequency of the signal")
+        mod_freq_spinbox.setToolTip("Set the modulation frequency of the signal")
+        mod_freq_slider.valueChanged.connect(lambda value: mod_freq_spinbox.setValue(value / 10))
+        mod_freq_spinbox.valueChanged.connect(lambda value: mod_freq_slider.setValue(int(value * 10)))
+        mod_freq_spinbox.valueChanged.connect(self.update_plot)
+        control_layout.addRow(f"Modulationsfrequenz {signal_number} (Hz):", self.wrap_widget_with_slider_and_spinbox(mod_freq_slider, mod_freq_spinbox))
         self.signal_controls[signal_number]['mod_freq_slider'] = mod_freq_slider
 
-        # mod depth slider
-        mod_depth_slider = self.create_slider(0, 1, getattr(self, f'mod_depth_{signal_number}'), decimals=2)
-        mod_depth_label = QtWidgets.QLabel(f"{getattr(self, f'mod_depth_{signal_number}'):.2f}")
-        mod_depth_slider.valueChanged.connect(lambda value, lbl=mod_depth_label: lbl.setText(f"{value / 100:.2f}"))
-        mod_depth_slider.valueChanged.connect(self.update_plot)
-        control_layout.addRow(f"Modulationstiefe {signal_number}:", self.wrap_widget_with_label(mod_depth_label, mod_depth_slider))
+        # mod depth slider + SpinBox
+        mod_depth_slider = self.create_slider(0, 100, getattr(self, f'mod_depth_{signal_number}') * 100, decimals=0)
+        mod_depth_spinbox = QtWidgets.QDoubleSpinBox()
+        mod_depth_spinbox.setRange(0.0, 1.0)
+        mod_depth_spinbox.setSingleStep(0.01)
+        mod_depth_spinbox.setDecimals(2)
+        mod_depth_spinbox.setValue(getattr(self, f'mod_depth_{signal_number}'))
+        mod_depth_spinbox.setFixedWidth(80)
+        mod_depth_slider.setToolTip("Adjust the modulation depth of the signal")
+        mod_depth_spinbox.setToolTip("Set the modulation depth of the signal")
+        mod_depth_slider.valueChanged.connect(lambda value: mod_depth_spinbox.setValue(value / 100))
+        mod_depth_spinbox.valueChanged.connect(lambda value: mod_depth_slider.setValue(int(value * 100)))
+        mod_depth_spinbox.valueChanged.connect(self.update_plot)
+        control_layout.addRow(f"Modulationstiefe {signal_number}:", self.wrap_widget_with_slider_and_spinbox(mod_depth_slider, mod_depth_spinbox))
         self.signal_controls[signal_number]['mod_depth_slider'] = mod_depth_slider
 
         # volume knob
         volume_dial = QtWidgets.QDial()
         volume_dial.setRange(0, 100)
         volume_dial.setValue(int(getattr(self, f'volume_{signal_number}') * 100))
+        volume_dial.setToolTip("Adjust the volume of the signal")
         volume_label = QtWidgets.QLabel(f"{getattr(self, f'volume_{signal_number}'):.2f}")
         volume_dial.valueChanged.connect(lambda value, lbl=volume_label: lbl.setText(f"{value / 100:.2f}"))
         volume_dial.valueChanged.connect(self.update_plot)
@@ -123,6 +160,7 @@ class SineWaveApp(QtWidgets.QWidget):
         pan_dial = QtWidgets.QDial()
         pan_dial.setRange(0, 100)
         pan_dial.setValue(int(getattr(self, f'pan_{signal_number}') * 100))
+        pan_dial.setToolTip("Adjust the panning of the signal between left and right")
         pan_label = QtWidgets.QLabel(f"{getattr(self, f'pan_{signal_number}'):.2f}")
         pan_dial.valueChanged.connect(lambda value, lbl=pan_label: lbl.setText(f"{value / 100:.2f}"))
         pan_dial.valueChanged.connect(self.update_plot)
@@ -134,6 +172,7 @@ class SineWaveApp(QtWidgets.QWidget):
         waveform_layout = QtWidgets.QHBoxLayout()
         for waveform in ["sine", "square", "triangle", "sawtooth"]:
             button = QtWidgets.QRadioButton(waveform)
+            button.setToolTip(f"Select {waveform} waveform for signal {signal_number}")
             if waveform == "sine":
                 button.setChecked(True)
             waveform_buttons.addButton(button)
@@ -142,11 +181,14 @@ class SineWaveApp(QtWidgets.QWidget):
         control_layout.addRow(f"Wellenform {signal_number}:", waveform_layout)
         self.signal_controls[signal_number]['waveform_buttons'] = waveform_buttons
 
-        # mute checkbox
-        mute_checkbox = QtWidgets.QCheckBox("Mute")
-        mute_checkbox.stateChanged.connect(lambda state, sn=signal_number: self.toggle_mute(sn, state))
-        control_layout.addRow(mute_checkbox)
-        self.signal_controls[signal_number]['mute_checkbox'] = mute_checkbox
+        # mute button
+        mute_button = QtWidgets.QPushButton()
+        mute_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaVolumeMuted))
+        mute_button.setToolTip("Mute/unmute the signal")
+        mute_button.setCheckable(True)
+        mute_button.toggled.connect(lambda state, sn=signal_number: self.toggle_mute(sn, state))
+        control_layout.addRow(mute_button)
+        self.signal_controls[signal_number]['mute_checkbox'] = mute_button
 
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
@@ -155,6 +197,12 @@ class SineWaveApp(QtWidgets.QWidget):
         layout = QtWidgets.QHBoxLayout()
         layout.addWidget(label)
         layout.addWidget(widget)
+        return layout
+
+    def wrap_widget_with_slider_and_spinbox(self, slider, spinbox):
+        layout = QtWidgets.QHBoxLayout()
+        layout.addWidget(slider)
+        layout.addWidget(spinbox)
         return layout
 
     def create_slider(self, min_val, max_val, initial_value, decimals=0):
