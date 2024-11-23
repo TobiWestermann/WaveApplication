@@ -118,7 +118,7 @@ class SineWaveApp(QtWidgets.QWidget):
         self.create_slider_and_spinbox(control_layout, "Modulationsfrequenz", signal_number, 'mod_freq', 0.1, 50, 0.1, "Hz", 1, params['mod_freq'])
         self.create_slider_and_spinbox(control_layout, "Modulationstiefe", signal_number, 'mod_depth', 0.0, 1.0, 0.01, "", 2, params['mod_depth'])
         
-        volume_dial, volume_spinbox = self.create_dial_with_spinbox(0.0, 1.0, params['volume'], "Adjust the volume of the signal", 0.01)
+        volume_dial, volume_spinbox = self.create_dial_with_spinbox(0.0, 2.0, params['volume'], "Adjust the volume of the signal", 0.01)
         control_layout.addRow(f"Lautstärke {signal_number}:", self.wrap_widget_with_label(volume_spinbox, volume_dial))
         self.signal_controls[signal_number]['volume_dial'] = volume_dial
 
@@ -236,23 +236,27 @@ class SineWaveApp(QtWidgets.QWidget):
         return wave * volume
 
     def update_plot(self):
-        fs = self.sampling_rate
-        if self.scrolling_plot:
-            t = np.linspace(self.time_offset, self.time_offset + 0.05, int(0.05 * fs), endpoint=False)
-            self.time_offset += 0.0005  # for scrolling effect
-        else:
-            t = np.linspace(0, 0.05, int(0.05 * fs), endpoint=False)
+            fs = self.sampling_rate
+            if self.scrolling_plot:
+                t = np.linspace(self.time_offset, self.time_offset + 0.05, int(0.05 * fs), endpoint=False)
+                self.time_offset += 0.0005  # for scrolling effect
+            else:
+                t = np.linspace(0, 0.05, int(0.05 * fs), endpoint=False)
 
-        combined_wave = np.zeros_like(t)
+            combined_wave = np.zeros_like(t)
 
-        for signal_number in self.signal_parameters.keys():
-            combined_wave += self.generate_signal(t, signal_number)
+            for signal_number in self.signal_parameters.keys():
+                combined_wave += self.generate_signal(t, signal_number)
 
-        combined_wave = np.clip(combined_wave, -1, 1)
+            num_active_signals = sum(1 for signal_number in self.signal_parameters if not self.signal_controls[signal_number]['mute_checkbox'].isChecked())
+            if num_active_signals > 1:
+                combined_wave /= num_active_signals
 
-        self.line.set_data(t, combined_wave)
-        self.ax.set_xlim(t[0], t[-1])
-        self.canvas.draw()
+            combined_wave = np.clip(combined_wave, -1, 1)
+
+            self.line.set_data(t, combined_wave)
+            self.ax.set_xlim(t[0], t[-1])
+            self.canvas.draw()
 
     def toggle_plot_mode(self):
         self.scrolling_plot = not self.scrolling_plot
@@ -268,39 +272,46 @@ class SineWaveApp(QtWidgets.QWidget):
         self.update_plot()
 
     def audio_callback(self, outdata, frames, time, status):
-            if not self.running:
-                outdata[:] = np.zeros((frames, 2))
-                return
+        if not self.running:
+            outdata[:] = np.zeros((frames, 2))
+            return
 
-            fs = self.sampling_rate
-            t = (np.arange(frames) + self.sample_offset) / fs
-            self.sample_offset += frames
-            
-            left_channel = np.zeros_like(t)
-            right_channel = np.zeros_like(t)
+        fs = self.sampling_rate
+        t = (np.arange(frames) + self.sample_offset) / fs
+        self.sample_offset += frames
 
-            for signal_number in list(self.signal_parameters.keys()):
-                wave = self.generate_signal(t, signal_number)
-                pan = self.signal_controls[signal_number]['pan_dial'].value() / 100
-                left_channel += wave * (1 - pan)
-                right_channel += wave * pan
+        left_channel = np.zeros_like(t)
+        right_channel = np.zeros_like(t)
 
-            left_channel = np.clip(left_channel, -1, 1)
-            right_channel = np.clip(right_channel, -1, 1)
+        for signal_number in list(self.signal_parameters.keys()):
+            wave = self.generate_signal(t, signal_number)
+            pan = self.signal_controls[signal_number]['pan_dial'].value() / 100
 
-            self.clip_buffer.extend(np.maximum(np.abs(left_channel), np.abs(right_channel)))
+            left_gain = np.cos(pan * np.pi / 2) / np.sqrt(2)
+            right_gain = np.sin(pan * np.pi / 2) / np.sqrt(2)
 
-            if any(value >= 0.95 for value in self.clip_buffer):
-                self.clipping_label.setVisible(True)
-            else:
-                self.clipping_label.setVisible(False)
+            left_channel += wave * left_gain
+            right_channel += wave * right_gain
 
-            stereo_wave = np.vstack((left_channel, right_channel)).T
+        num_active_signals = sum(1 for signal_number in self.signal_parameters if not self.signal_controls[signal_number]['mute_checkbox'].isChecked())
+        if num_active_signals > 1:
+            left_channel /= num_active_signals
+            right_channel /= num_active_signals
 
-            outdata[:] = stereo_wave
+        left_channel = np.clip(left_channel, -1, 1)
+        right_channel = np.clip(right_channel, -1, 1)
 
-            if self.recording:
-                self.recorded_frames.append(stereo_wave.copy())
+        if np.any(left_channel >= 0.95) or np.any(left_channel <= -0.95) or np.any(right_channel >= 0.95) or np.any(right_channel <= -0.95):
+            self.clipping_label.setVisible(True)
+        else:
+            self.clipping_label.setVisible(False)
+
+        stereo_wave = np.vstack((left_channel, right_channel)).T
+
+        outdata[:] = stereo_wave
+
+        if self.recording:
+            self.recorded_frames.append(stereo_wave.copy())
 
 
     def toggle_recording(self, state):
