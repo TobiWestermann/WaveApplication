@@ -1,8 +1,9 @@
-from PySide6 import QtWidgets, QtCore
+from PySide6 import QtWidgets, QtCore, QtGui
 import numpy as np
 import sounddevice as sd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+import time as pytime
 
 class SineWaveApp(QtWidgets.QWidget):
     def __init__(self):
@@ -32,6 +33,7 @@ class SineWaveApp(QtWidgets.QWidget):
         self.running = False
         self.time_offset = 0
         self.scrolling_plot = False  # fixed plot default
+        self.last_callback_time = None  # For latency measurement
 
         self.init_ui()
 
@@ -44,6 +46,7 @@ class SineWaveApp(QtWidgets.QWidget):
             QSlider::groove:horizontal { background: #444; }
             QSlider::handle:horizontal { background: #00bcd4; }
             QPushButton { background-color: #444; border: none; color: #00bcd4; }
+            QPushButton#playButton, QPushButton#stopButton { color: #ffffff; }
             QGroupBox { border: 1px solid #00bcd4; margin-top: 10px; }
             QLabel { color: #f0f0f0; }
             QCheckBox { color: #f0f0f0; }
@@ -59,13 +62,27 @@ class SineWaveApp(QtWidgets.QWidget):
         # buttons layout
         button_layout = QtWidgets.QHBoxLayout()
         self.start_button = QtWidgets.QPushButton()
-        self.start_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaPlay))
+        self.start_button.setObjectName("playButton")
+        play_icon = self.style().standardIcon(QtWidgets.QStyle.SP_MediaPlay)
+        play_pixmap = play_icon.pixmap(48, 48)
+        painter = QtGui.QPainter(play_pixmap)
+        painter.setCompositionMode(QtGui.QPainter.CompositionMode_SourceIn)
+        painter.fillRect(play_pixmap.rect(), QtGui.QColor(255, 255, 255))
+        painter.end()
+        self.start_button.setIcon(QtGui.QIcon(play_pixmap))
         self.start_button.setToolTip("Start audio playback")
         self.start_button.clicked.connect(self.start)
         button_layout.addWidget(self.start_button)
 
         self.stop_button = QtWidgets.QPushButton()
-        self.stop_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaStop))
+        self.stop_button.setObjectName("stopButton")
+        stop_icon = self.style().standardIcon(QtWidgets.QStyle.SP_MediaStop)
+        stop_pixmap = stop_icon.pixmap(48, 48)
+        painter = QtGui.QPainter(stop_pixmap)
+        painter.setCompositionMode(QtGui.QPainter.CompositionMode_SourceIn)
+        painter.fillRect(stop_pixmap.rect(), QtGui.QColor(255, 255, 255))
+        painter.end()
+        self.stop_button.setIcon(QtGui.QIcon(stop_pixmap))
         self.stop_button.setToolTip("Stop audio playback")
         self.stop_button.clicked.connect(self.stop)
         button_layout.addWidget(self.stop_button)
@@ -86,6 +103,10 @@ class SineWaveApp(QtWidgets.QWidget):
         self.ax.set_xlabel("Time in s")
         self.ax.set_ylabel("Amplitude")
         main_layout.addWidget(self.canvas)
+
+        # Latency label
+        self.latency_label = QtWidgets.QLabel("Callback latency: N/A")
+        main_layout.addWidget(self.latency_label)
 
         self.setLayout(main_layout)
 
@@ -114,13 +135,13 @@ class SineWaveApp(QtWidgets.QWidget):
         self.signal_controls[signal_number]['freq_slider'] = freq_slider
 
         # mod freq slider + SpinBox
-        mod_freq_slider = self.create_slider(0, 50, getattr(self, f'mod_freq_{signal_number}'), decimals=1)
+        mod_freq_slider = self.create_slider(1, 500, getattr(self, f'mod_freq_{signal_number}'), decimals=1)
         mod_freq_spinbox = QtWidgets.QDoubleSpinBox()
-        mod_freq_spinbox.setRange(0, 50.0)
+        mod_freq_spinbox.setRange(0.1, 50.0)
         mod_freq_spinbox.setSingleStep(0.1)
         mod_freq_spinbox.setDecimals(1)
-        mod_freq_spinbox.setValue(getattr(self, f'mod_freq_{signal_number}'))
         mod_freq_spinbox.setFixedWidth(80)
+        mod_freq_spinbox.setValue(getattr(self, f'mod_freq_{signal_number}'))
         mod_freq_slider.setToolTip("Adjust the modulation frequency of the signal")
         mod_freq_spinbox.setToolTip("Set the modulation frequency of the signal")
         mod_freq_slider.valueChanged.connect(lambda value: mod_freq_spinbox.setValue(value / 10))
@@ -135,8 +156,8 @@ class SineWaveApp(QtWidgets.QWidget):
         mod_depth_spinbox.setRange(0.0, 1.0)
         mod_depth_spinbox.setSingleStep(0.01)
         mod_depth_spinbox.setDecimals(2)
-        mod_depth_spinbox.setValue(getattr(self, f'mod_depth_{signal_number}'))
         mod_depth_spinbox.setFixedWidth(80)
+        mod_depth_spinbox.setValue(getattr(self, f'mod_depth_{signal_number}'))
         mod_depth_slider.setToolTip("Adjust the modulation depth of the signal")
         mod_depth_spinbox.setToolTip("Set the modulation depth of the signal")
         mod_depth_slider.valueChanged.connect(lambda value: mod_depth_spinbox.setValue(value / 100))
@@ -187,7 +208,7 @@ class SineWaveApp(QtWidgets.QWidget):
         mute_button.setToolTip("Mute/unmute the signal")
         mute_button.setCheckable(True)
         mute_button.toggled.connect(lambda state, sn=signal_number: self.toggle_mute(sn, state))
-        control_layout.addRow(mute_button)
+        control_layout.addRow(f"Mute {signal_number}:", mute_button)
         self.signal_controls[signal_number]['mute_checkbox'] = mute_button
 
         control_group.setLayout(control_layout)
@@ -275,6 +296,14 @@ class SineWaveApp(QtWidgets.QWidget):
         fs = self.sampling_rate
         t = (np.arange(frames) + self.sample_offset) / fs
         self.sample_offset += frames
+
+        current_time = pytime.time()
+        if self.last_callback_time is not None:
+            callback_interval = current_time - self.last_callback_time
+            expected_interval = frames / self.sampling_rate
+            latency = abs(callback_interval - expected_interval)
+            self.latency_label.setText(f"Callback latency: {latency:.6f} s")
+        self.last_callback_time = current_time
 
         left_channel = np.zeros_like(t)
         right_channel = np.zeros_like(t)
