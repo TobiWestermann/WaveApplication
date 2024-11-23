@@ -166,26 +166,38 @@ class SineWaveApp(QtWidgets.QWidget):
         control_layout.addRow(f"Modulationstiefe {signal_number}:", self.wrap_widget_with_slider_and_spinbox(mod_depth_slider, mod_depth_spinbox))
         self.signal_controls[signal_number]['mod_depth_slider'] = mod_depth_slider
 
-        # volume knob
+        # volume knob + SpinBox
         volume_dial = QtWidgets.QDial()
         volume_dial.setRange(0, 100)
         volume_dial.setValue(int(getattr(self, f'volume_{signal_number}') * 100))
         volume_dial.setToolTip("Adjust the volume of the signal")
-        volume_label = QtWidgets.QLabel(f"{getattr(self, f'volume_{signal_number}'):.2f}")
-        volume_dial.valueChanged.connect(lambda value, lbl=volume_label: lbl.setText(f"{value / 100:.2f}"))
-        volume_dial.valueChanged.connect(self.update_plot)
-        control_layout.addRow(f"Lautstärke {signal_number}:", self.wrap_widget_with_label(volume_label, volume_dial))
+        volume_spinbox = QtWidgets.QDoubleSpinBox()
+        volume_spinbox.setRange(0.0, 1.0)
+        volume_spinbox.setSingleStep(0.01)
+        volume_spinbox.setDecimals(2)
+        volume_spinbox.setFixedWidth(80)
+        volume_spinbox.setValue(getattr(self, f'volume_{signal_number}'))
+        volume_dial.valueChanged.connect(lambda value: volume_spinbox.setValue(value / 100))
+        volume_spinbox.valueChanged.connect(lambda value: volume_dial.setValue(int(value * 100)))
+        volume_spinbox.valueChanged.connect(self.update_plot)
+        control_layout.addRow(f"Lautstärke {signal_number}:", self.wrap_widget_with_label(volume_spinbox, volume_dial))
         self.signal_controls[signal_number]['volume_dial'] = volume_dial
 
-        # pan knob
+        # pan knob + SpinBox
         pan_dial = QtWidgets.QDial()
         pan_dial.setRange(0, 100)
         pan_dial.setValue(int(getattr(self, f'pan_{signal_number}') * 100))
         pan_dial.setToolTip("Adjust the panning of the signal between left and right")
-        pan_label = QtWidgets.QLabel(f"{getattr(self, f'pan_{signal_number}'):.2f}")
-        pan_dial.valueChanged.connect(lambda value, lbl=pan_label: lbl.setText(f"{value / 100:.2f}"))
-        pan_dial.valueChanged.connect(self.update_plot)
-        control_layout.addRow(f"Panning {signal_number} (L-R):", self.wrap_widget_with_label(pan_label, pan_dial))
+        pan_spinbox = QtWidgets.QDoubleSpinBox()
+        pan_spinbox.setRange(0.0, 1.0)
+        pan_spinbox.setSingleStep(0.01)
+        pan_spinbox.setDecimals(2)
+        pan_spinbox.setFixedWidth(80)
+        pan_spinbox.setValue(getattr(self, f'pan_{signal_number}'))
+        pan_dial.valueChanged.connect(lambda value: pan_spinbox.setValue(value / 100))
+        pan_spinbox.valueChanged.connect(lambda value: pan_dial.setValue(int(value * 100)))
+        pan_spinbox.valueChanged.connect(self.update_plot)
+        control_layout.addRow(f"Panning {signal_number} (L-R):", self.wrap_widget_with_label(pan_spinbox, pan_dial))
         self.signal_controls[signal_number]['pan_dial'] = pan_dial
 
         # waveform selection
@@ -204,10 +216,10 @@ class SineWaveApp(QtWidgets.QWidget):
 
         # mute button
         mute_button = QtWidgets.QPushButton()
-        mute_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaVolumeMuted))
+        mute_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaVolume))
         mute_button.setToolTip("Mute/unmute the signal")
         mute_button.setCheckable(True)
-        mute_button.toggled.connect(lambda state, sn=signal_number: self.toggle_mute(sn, state))
+        mute_button.toggled.connect(lambda state, btn=mute_button, sn=signal_number: self.toggle_mute_button(state, btn, sn))
         control_layout.addRow(f"Mute {signal_number}:", mute_button)
         self.signal_controls[signal_number]['mute_checkbox'] = mute_button
 
@@ -284,7 +296,11 @@ class SineWaveApp(QtWidgets.QWidget):
             self.time_offset = 0
         self.update_plot()
 
-    def toggle_mute(self, signal_number, state):
+    def toggle_mute_button(self, state, button, signal_number):
+        if state:
+            button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaVolumeMuted))
+        else:
+            button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaVolume))
         self.signal_controls[signal_number]['mute_checkbox'].setChecked(state)
         self.update_plot()
 
@@ -297,6 +313,7 @@ class SineWaveApp(QtWidgets.QWidget):
         t = (np.arange(frames) + self.sample_offset) / fs
         self.sample_offset += frames
 
+        # Latenzmessung
         current_time = pytime.time()
         if self.last_callback_time is not None:
             callback_interval = current_time - self.last_callback_time
