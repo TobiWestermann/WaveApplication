@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import os
 import soundfile as sf
+import collections
 
 class SineWaveApp(QtWidgets.QWidget):
     def __init__(self):
@@ -12,6 +13,8 @@ class SineWaveApp(QtWidgets.QWidget):
         self.setWindowTitle("Waveform Generator")
 
         self.sampling_rate = 48000
+
+        self.clip_buffer = collections.deque(maxlen=self.sampling_rate)
 
         # sig params
         self.signal_parameters = {
@@ -74,6 +77,15 @@ class SineWaveApp(QtWidgets.QWidget):
         self.tab_widget.tabCloseRequested.connect(self.remove_signal_tab)
 
         left_layout.addLayout(button_layout)
+
+        # Clipping indicator
+        self.clipping_label = QtWidgets.QLabel("Clipping Detected!")
+        self.clipping_label.setStyleSheet("color: red; font-weight: bold;")
+        self.clipping_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.clipping_label.setVisible(False)
+        left_layout.addWidget(self.clipping_label)
+        left_layout.setStretchFactor(self.clipping_label, 0)
+        left_layout.addStretch(1)
 
         # plot Layout
         self.fig, self.ax = plt.subplots()
@@ -256,32 +268,40 @@ class SineWaveApp(QtWidgets.QWidget):
         self.update_plot()
 
     def audio_callback(self, outdata, frames, time, status):
-        if not self.running:
-            outdata[:] = np.zeros((frames, 2))
-            return
+            if not self.running:
+                outdata[:] = np.zeros((frames, 2))
+                return
 
-        fs = self.sampling_rate
-        t = (np.arange(frames) + self.sample_offset) / fs
-        self.sample_offset += frames
-        
-        left_channel = np.zeros_like(t)
-        right_channel = np.zeros_like(t)
+            fs = self.sampling_rate
+            t = (np.arange(frames) + self.sample_offset) / fs
+            self.sample_offset += frames
+            
+            left_channel = np.zeros_like(t)
+            right_channel = np.zeros_like(t)
 
-        for signal_number in list(self.signal_parameters.keys()):
-            wave = self.generate_signal(t, signal_number)
-            pan = self.signal_controls[signal_number]['pan_dial'].value() / 100
-            left_channel += wave * (1 - pan)
-            right_channel += wave * pan
+            for signal_number in list(self.signal_parameters.keys()):
+                wave = self.generate_signal(t, signal_number)
+                pan = self.signal_controls[signal_number]['pan_dial'].value() / 100
+                left_channel += wave * (1 - pan)
+                right_channel += wave * pan
 
-        left_channel = np.clip(left_channel, -1, 1)
-        right_channel = np.clip(right_channel, -1, 1)
+            left_channel = np.clip(left_channel, -1, 1)
+            right_channel = np.clip(right_channel, -1, 1)
 
-        stereo_wave = np.vstack((left_channel, right_channel)).T
+            self.clip_buffer.extend(np.maximum(np.abs(left_channel), np.abs(right_channel)))
 
-        outdata[:] = stereo_wave
+            if any(value >= 0.95 for value in self.clip_buffer):
+                self.clipping_label.setVisible(True)
+            else:
+                self.clipping_label.setVisible(False)
 
-        if self.recording:
-            self.recorded_frames.append(stereo_wave.copy())
+            stereo_wave = np.vstack((left_channel, right_channel)).T
+
+            outdata[:] = stereo_wave
+
+            if self.recording:
+                self.recorded_frames.append(stereo_wave.copy())
+
 
     def toggle_recording(self, state):
         if state:
