@@ -79,13 +79,11 @@ class SineWaveApp(QtWidgets.QWidget):
         left_layout.addLayout(button_layout)
 
         # Clipping indicator
-        self.clipping_label = QtWidgets.QLabel("Clipping Detected!")
+        self.clipping_label = QtWidgets.QLabel(" ")
         self.clipping_label.setStyleSheet("color: red; font-weight: bold;")
         self.clipping_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.clipping_label.setVisible(False)
         left_layout.addWidget(self.clipping_label)
-        left_layout.setStretchFactor(self.clipping_label, 0)
-        left_layout.addStretch(1)
+
 
         # plot Layout
         self.fig, self.ax = plt.subplots()
@@ -99,7 +97,6 @@ class SineWaveApp(QtWidgets.QWidget):
         right_layout.addWidget(self.canvas)
         main_layout.addLayout(right_layout)
 
-        
         self.setLayout(main_layout)
 
         self.timer = QtCore.QTimer(self)
@@ -117,6 +114,7 @@ class SineWaveApp(QtWidgets.QWidget):
         self.create_slider_and_spinbox(control_layout, "Frequenz", signal_number, 'frequency', 10, 20000, 1, "Hz", 0, params['frequency'])
         self.create_slider_and_spinbox(control_layout, "Modulationsfrequenz", signal_number, 'mod_freq', 0.1, 50, 0.1, "Hz", 1, params['mod_freq'])
         self.create_slider_and_spinbox(control_layout, "Modulationstiefe", signal_number, 'mod_depth', 0.0, 1.0, 0.01, "", 2, params['mod_depth'])
+        self.create_slider_and_spinbox(control_layout, "Harmonics", signal_number, 'harmonic_richness', 0, 10, 1, "", 0, params.get('harmonic_richness', 0))
         
         volume_dial, volume_spinbox = self.create_dial_with_spinbox(0.0, 2.0, params['volume'], "Adjust the volume of the signal", 0.01)
         control_layout.addRow(f"Lautstärke {signal_number}:", self.wrap_widget_with_label(volume_spinbox, volume_dial))
@@ -187,7 +185,7 @@ class SineWaveApp(QtWidgets.QWidget):
         slider.valueChanged.connect(lambda value: spinbox.setValue(value / (10 ** decimals)))
         spinbox.valueChanged.connect(lambda value: slider.setValue(int(value * (10 ** decimals))))
         spinbox.valueChanged.connect(self.update_plot)
-        layout.addRow(f"{label} {signal_number} ({unit}):", self.wrap_widget_with_slider_and_spinbox(slider, spinbox))
+        layout.addRow(f"{label}:", self.wrap_widget_with_slider_and_spinbox(slider, spinbox))
         self.signal_controls[signal_number][f'{param_name}_slider'] = slider
 
     def wrap_widget_with_label(self, label, widget):
@@ -210,6 +208,18 @@ class SineWaveApp(QtWidgets.QWidget):
         slider.valueChanged.connect(self.update_plot)
         return slider
 
+    def sine_wave(self, freq, t):
+        return np.sin(2 * np.pi * freq * t)
+
+    def square_wave(self, freq, t):
+        return np.sign(np.sin(2 * np.pi * freq * t))
+
+    def triangle_wave(self, freq, t):
+        return 2 * np.abs(2 * ((t * freq) % 1) - 1) - 1
+
+    def sawtooth_wave(self, freq, t):
+        return 2 * (t * freq % 1) - 1
+
     def generate_signal(self, t, signal_number):
         controls = self.signal_controls[signal_number]
         if controls['mute_checkbox'].isChecked():
@@ -222,16 +232,33 @@ class SineWaveApp(QtWidgets.QWidget):
         waveform = controls['waveform_buttons'].checkedButton().text()
 
         modulator = 1 + mod_depth * np.sin(2 * np.pi * mod_freq * t)
+
+        # Verwende die entsprechende Methode basierend auf der Wellenform
         if waveform == "sine":
-            wave = np.sin(2 * np.pi * freq * t) * modulator
+            wave = self.sine_wave(freq, t) * modulator
         elif waveform == "square":
-            wave = np.sign(np.sin(2 * np.pi * freq * t)) * modulator
+            wave = self.square_wave(freq, t) * modulator
         elif waveform == "triangle":
-            wave = (2 * np.abs(2 * ((t * freq) % 1) - 1) - 1) * modulator
+            wave = self.triangle_wave(freq, t) * modulator
         elif waveform == "sawtooth":
-            wave = (2 * (t * freq % 1) - 1) * modulator
+            wave = self.sawtooth_wave(freq, t) * modulator
         else:
-            wave = np.sin(2 * np.pi * freq * t) * modulator
+            wave = self.sine_wave(freq, t) * modulator
+
+        harmonic_richness = controls['harmonic_richness_slider'].value()
+        harmonics = np.zeros_like(wave)
+
+        for n in range(2, harmonic_richness + 2):
+            if waveform == "sine":
+                harmonics += (1 / n) * self.sine_wave(freq * n, t)
+            elif waveform == "square":
+                harmonics += (1 / n) * self.square_wave(freq * n, t)
+            elif waveform == "triangle":
+                harmonics += (1 / n**2) * self.triangle_wave(freq * n, t)
+            elif waveform == "sawtooth":
+                harmonics += (1 / n) * self.sawtooth_wave(freq * n, t)
+
+        wave += harmonics
 
         return wave * volume
 
@@ -302,9 +329,10 @@ class SineWaveApp(QtWidgets.QWidget):
         right_channel = np.clip(right_channel, -1, 1)
 
         if np.any(left_channel >= 0.95) or np.any(left_channel <= -0.95) or np.any(right_channel >= 0.95) or np.any(right_channel <= -0.95):
-            self.clipping_label.setVisible(True)
+            self.clipping_label.setText("Clipping Detected!")
         else:
-            self.clipping_label.setVisible(False)
+            self.clipping_label.setText(" ")
+
 
         stereo_wave = np.vstack((left_channel, right_channel)).T
 
