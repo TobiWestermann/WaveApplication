@@ -84,7 +84,6 @@ class SineWaveApp(QtWidgets.QWidget):
         self.clipping_label.setAlignment(QtCore.Qt.AlignCenter)
         left_layout.addWidget(self.clipping_label)
 
-
         # plot Layout
         self.fig, self.ax = plt.subplots()
         self.canvas = FigureCanvas(self.fig)
@@ -112,10 +111,19 @@ class SineWaveApp(QtWidgets.QWidget):
         params = self.signal_parameters[signal_number]
 
         self.create_slider_and_spinbox(control_layout, "Frequenz", signal_number, 'frequency', 10, 20000, 1, "Hz", 0, params['frequency'])
-        self.create_slider_and_spinbox(control_layout, "Modulationsfrequenz", signal_number, 'mod_freq', 0.1, 50, 0.1, "Hz", 1, params['mod_freq'])
-        self.create_slider_and_spinbox(control_layout, "Modulationstiefe", signal_number, 'mod_depth', 0.0, 1.0, 0.01, "", 2, params['mod_depth'])
+        self.create_slider_and_spinbox(control_layout, "Phase", signal_number, 'phase_shift', 0, 360, 1, "°", 0, params.get('phase_shift', 0))
+        self.create_slider_and_spinbox(control_layout, "AM Modulationsfrequenz", signal_number, 'mod_freq', 0.0, 50, 0.1, "Hz", 1, params['mod_freq'])
+        self.create_slider_and_spinbox(control_layout, "AM Modulationstiefe", signal_number, 'mod_depth', 0.0, 1.0, 0.01, "", 2, params['mod_depth'])
+        self.create_slider_and_spinbox(control_layout, "FM Modulationsfrequenz", signal_number, 'fm_mod_freq', 0.1, 100.0, 0.1, "Hz", 1, params.get('fm_mod_freq', 0.1))
+        self.create_slider_and_spinbox(control_layout, "FM Modulationsindex", signal_number, 'fm_mod_index', 0.0, 10.0, 0.1, "", 1, params.get('fm_mod_index', 0.0))
         self.create_slider_and_spinbox(control_layout, "Harmonics", signal_number, 'harmonic_richness', 0, 10, 1, "", 0, params.get('harmonic_richness', 0))
-        
+
+        pwm_label, pwm_slider, pwm_spinbox = self.create_slider_and_spinbox(control_layout, "PWM Pulsweite", signal_number, 'pwm_width', 1, 99, 1, "%", 0, params.get('pwm_width', 50))
+        self.signal_controls[signal_number]['pwm_label'] = pwm_label
+        self.signal_controls[signal_number]['pwm_slider'] = pwm_slider
+        self.signal_controls[signal_number]['pwm_spinbox'] = pwm_spinbox
+        self.set_slider_and_spinbox_visibility(pwm_label, pwm_slider, pwm_spinbox, False)
+
         volume_dial, volume_spinbox = self.create_dial_with_spinbox(0.0, 2.0, params['volume'], "Adjust the volume of the signal", 0.01)
         control_layout.addRow(f"Lautstärke {signal_number}:", self.wrap_widget_with_label(volume_spinbox, volume_dial))
         self.signal_controls[signal_number]['volume_dial'] = volume_dial
@@ -177,7 +185,8 @@ class SineWaveApp(QtWidgets.QWidget):
         spinbox = QtWidgets.QDoubleSpinBox() if decimals > 0 else QtWidgets.QSpinBox()
         spinbox.setRange(min_val, max_val)
         spinbox.setSingleStep(single_step)
-        spinbox.setDecimals(decimals) if decimals > 0 else None
+        if decimals > 0:
+            spinbox.setDecimals(decimals)
         spinbox.setFixedWidth(80)
         spinbox.setValue(initial_value)
         slider.setToolTip(f"Adjust the {label.lower()} of the signal")
@@ -185,8 +194,27 @@ class SineWaveApp(QtWidgets.QWidget):
         slider.valueChanged.connect(lambda value: spinbox.setValue(value / (10 ** decimals)))
         spinbox.valueChanged.connect(lambda value: slider.setValue(int(value * (10 ** decimals))))
         spinbox.valueChanged.connect(self.update_plot)
-        layout.addRow(f"{label}:", self.wrap_widget_with_slider_and_spinbox(slider, spinbox))
+
+        label_widget = QtWidgets.QLabel(label)
+        label_widget.original_text = label
+
+        layout.addRow(label_widget, self.wrap_widget_with_slider_and_spinbox(slider, spinbox))
+
         self.signal_controls[signal_number][f'{param_name}_slider'] = slider
+        self.signal_controls[signal_number][f'{param_name}_spinbox'] = spinbox
+        self.signal_controls[signal_number][f'{param_name}_label'] = label_widget
+        
+        return label_widget, slider, spinbox
+
+    def set_slider_and_spinbox_visibility(self, label, slider, spinbox, visible):
+        if visible:
+            label.setText(label.original_text)
+        else:
+            label.setText("")
+        
+        slider.setVisible(visible)
+        spinbox.setVisible(visible)
+
 
     def wrap_widget_with_label(self, label, widget):
         layout = QtWidgets.QHBoxLayout()
@@ -211,8 +239,9 @@ class SineWaveApp(QtWidgets.QWidget):
     def sine_wave(self, freq, t):
         return np.sin(2 * np.pi * freq * t)
 
-    def square_wave(self, freq, t):
-        return np.sign(np.sin(2 * np.pi * freq * t))
+    def square_wave(self, freq, t, pwm_width=50):
+        duty_cycle = pwm_width / 100.0
+        return np.where((t * freq % 1) < duty_cycle, 1.0, -1.0)
 
     def triangle_wave(self, freq, t):
         return 2 * np.abs(2 * ((t * freq) % 1) - 1) - 1
@@ -230,33 +259,52 @@ class SineWaveApp(QtWidgets.QWidget):
         mod_depth = controls['mod_depth_slider'].value() / 100
         volume = controls['volume_dial'].value() / 100
         waveform = controls['waveform_buttons'].checkedButton().text()
-
+        phase_shift = controls['phase_shift_slider'].value() * np.pi / 180
+        fm_mod_freq = controls['fm_mod_freq_slider'].value()
+        fm_mod_index = controls['fm_mod_index_slider'].value() / 10
+        pwm_width = controls['pwm_width_slider'].value()
         modulator = 1 + mod_depth * np.sin(2 * np.pi * mod_freq * t)
 
-        # Verwende die entsprechende Methode basierend auf der Wellenform
-        if waveform == "sine":
-            wave = self.sine_wave(freq, t) * modulator
-        elif waveform == "square":
-            wave = self.square_wave(freq, t) * modulator
-        elif waveform == "triangle":
-            wave = self.triangle_wave(freq, t) * modulator
-        elif waveform == "sawtooth":
-            wave = self.sawtooth_wave(freq, t) * modulator
+        pwm_label = controls['pwm_label']
+        pwm_slider = controls['pwm_slider']
+        pwm_spinbox = controls['pwm_spinbox']
+
+        if waveform == "square":
+            self.set_slider_and_spinbox_visibility(pwm_label, pwm_slider, pwm_spinbox, True)
         else:
-            wave = self.sine_wave(freq, t) * modulator
+            self.set_slider_and_spinbox_visibility(pwm_label, pwm_slider, pwm_spinbox, False)
+
+        fm_modulator_signal = fm_mod_index * np.sin(2 * np.pi * fm_mod_freq * t)
+        if waveform == "sine":
+            wave = self.sine_wave(freq + fm_modulator_signal, t + phase_shift / (2 * np.pi * freq))
+        elif waveform == "square":
+            wave = self.square_wave(freq + fm_modulator_signal, t + phase_shift / (2 * np.pi * freq), pwm_width)
+        elif waveform == "triangle":
+            wave = self.triangle_wave(freq + fm_modulator_signal, t + phase_shift / (2 * np.pi * freq))
+        elif waveform == "sawtooth":
+            wave = self.sawtooth_wave(freq + fm_modulator_signal, t + phase_shift / (2 * np.pi * freq))
+        else:
+            wave = self.sine_wave(freq + fm_modulator_signal, t + phase_shift / (2 * np.pi * freq))
+
+        wave *= modulator
 
         harmonic_richness = controls['harmonic_richness_slider'].value()
         harmonics = np.zeros_like(wave)
+        harmonic_fm_modulator_signal = fm_mod_index * np.sin(2 * np.pi * fm_mod_freq * t)
 
         for n in range(2, harmonic_richness + 2):
+            modulated_freq = freq * n + harmonic_fm_modulator_signal
             if waveform == "sine":
-                harmonics += (1 / n) * self.sine_wave(freq * n, t)
+                harmonics += (1 / n) * self.sine_wave(modulated_freq, t)
             elif waveform == "square":
-                harmonics += (1 / n) * self.square_wave(freq * n, t)
+                harmonics += (1 / n) * self.square_wave(modulated_freq, t, pwm_width)
             elif waveform == "triangle":
-                harmonics += (1 / n**2) * self.triangle_wave(freq * n, t)
+                harmonics += (1 / n**2) * self.triangle_wave(modulated_freq, t)
             elif waveform == "sawtooth":
-                harmonics += (1 / n) * self.sawtooth_wave(freq * n, t)
+                harmonics += (1 / n) * self.sawtooth_wave(modulated_freq, t)
+
+        harmonics *= modulator
+        harmonics *= (1 + fm_mod_index * np.sin(2 * np.pi * fm_mod_freq * t))
 
         wave += harmonics
 
@@ -365,12 +413,15 @@ class SineWaveApp(QtWidgets.QWidget):
     def create_default_signal_parameters(self, frequency=220.0):
         return {
             'frequency': frequency,
-            'mod_freq': 5.0,
-            'mod_depth': 0.5,
+            'mod_freq': 0.0,
+            'mod_depth': 0.0,
             'volume': 0.5,
             'pan': 0.5,
             'waveform': 'sine',
-            'mute': False
+            'mute': False,
+            'phase_shift': 0,
+            'fm_mod_freq': 0.0,
+            'fm_mod_index': 0.0
         }
 
     def add_new_signal(self):
