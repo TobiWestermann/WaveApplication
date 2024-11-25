@@ -23,7 +23,7 @@ class SineWaveApp(QtWidgets.QWidget):
 
         self.running = False
         self.time_offset = 0
-        self.scrolling_plot = False  # fixed plot default
+        self.scrolling_plot = False
         self.recording = False
         self.recorded_frames = []
 
@@ -125,7 +125,6 @@ class SineWaveApp(QtWidgets.QWidget):
 
     def keyPressEvent(self, event):
         key = event.key()
-        # Zum Verschieben der Tonleiter um eine Oktave
         if key == QtCore.Qt.Key_Plus:
             if self.current_octave_shift < len(self.octave_frequencies) - 1:
                 self.current_octave_shift += 1
@@ -135,7 +134,6 @@ class SineWaveApp(QtWidgets.QWidget):
                 self.current_octave_shift -= 1
                 self.octave_label.setText(f"Aktuelle Oktave: {self.octave_names[self.current_octave_shift]}")
 
-        # C-Dur Tonleiter, eine Oktave, angepasst an aktuelle Oktave
         base_frequency = self.octave_frequencies[self.current_octave_shift]
         key_mapping = {
             QtCore.Qt.Key_A: base_frequency,              # C
@@ -150,7 +148,7 @@ class SineWaveApp(QtWidgets.QWidget):
             QtCore.Qt.Key_H: base_frequency * 2**(9/12),  # A
             QtCore.Qt.Key_U: base_frequency * 2**(10/12), # A#
             QtCore.Qt.Key_J: base_frequency * 2**(11/12), # B
-            QtCore.Qt.Key_K: base_frequency * 2           # C (nächste Oktave)
+            QtCore.Qt.Key_K: base_frequency * 2           # C
         }
 
         if key in key_mapping:
