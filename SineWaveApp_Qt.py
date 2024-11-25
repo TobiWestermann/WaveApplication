@@ -27,7 +27,19 @@ class SineWaveApp(QtWidgets.QWidget):
         self.recording = False
         self.recorded_frames = []
 
+        self.key_status = {}
+        self.current_octave_shift = 5
+        self.octave_frequencies = [
+            8.18, 16.35, 32.70, 65.41, 130.81, 261.63, 523.25, 1046.50, 2093.00, 4186.01, 8372.02, 16744.04
+        ]
+
+        self.octave_names = [
+        "Subkontra", "Kontra", "Groß", "Klein", "Einsgestrichen", "Zweigestrichen", "Dreigestrichen", "Viergestrichen", "Fünfgestrichen", "Sechsgestrichen"
+        ]
+        self.frequency_changed = False
+
         self.init_ui()
+        self.setup_keyboard_controls()
 
     def init_ui(self):
         main_layout = QtWidgets.QHBoxLayout(self)
@@ -78,6 +90,11 @@ class SineWaveApp(QtWidgets.QWidget):
 
         left_layout.addLayout(button_layout)
 
+        self.octave_label = QtWidgets.QLabel(f"Aktuelle Oktave: {self.octave_names[self.current_octave_shift]}")
+        self.octave_label.setAlignment(QtCore.Qt.AlignCenter)
+        left_layout.addWidget(self.octave_label)
+
+
         # Clipping indicator
         self.clipping_label = QtWidgets.QLabel(" ")
         self.clipping_label.setStyleSheet("color: red; font-weight: bold;")
@@ -102,6 +119,69 @@ class SineWaveApp(QtWidgets.QWidget):
         self.timer.timeout.connect(self.update_plot)
         self.timer.start(30)  
 
+    def setup_keyboard_controls(self):
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self.key_status = {}
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        # Zum Verschieben der Tonleiter um eine Oktave
+        if key == QtCore.Qt.Key_Plus:
+            if self.current_octave_shift < len(self.octave_frequencies) - 1:
+                self.current_octave_shift += 1
+                self.octave_label.setText(f"Aktuelle Oktave: {self.octave_names[self.current_octave_shift]}")
+        elif key == QtCore.Qt.Key_Minus:
+            if self.current_octave_shift > 0:
+                self.current_octave_shift -= 1
+                self.octave_label.setText(f"Aktuelle Oktave: {self.octave_names[self.current_octave_shift]}")
+
+        # C-Dur Tonleiter, eine Oktave, angepasst an aktuelle Oktave
+        base_frequency = self.octave_frequencies[self.current_octave_shift]
+        key_mapping = {
+            QtCore.Qt.Key_A: base_frequency,              # C
+            QtCore.Qt.Key_W: base_frequency * 2**(1/12),  # C#
+            QtCore.Qt.Key_S: base_frequency * 2**(2/12),  # D
+            QtCore.Qt.Key_E: base_frequency * 2**(3/12),  # D#
+            QtCore.Qt.Key_D: base_frequency * 2**(4/12),  # E
+            QtCore.Qt.Key_F: base_frequency * 2**(5/12),  # F
+            QtCore.Qt.Key_T: base_frequency * 2**(6/12),  # F#
+            QtCore.Qt.Key_G: base_frequency * 2**(7/12),  # G
+            QtCore.Qt.Key_Z: base_frequency * 2**(8/12),  # G#
+            QtCore.Qt.Key_H: base_frequency * 2**(9/12),  # A
+            QtCore.Qt.Key_U: base_frequency * 2**(10/12), # A#
+            QtCore.Qt.Key_J: base_frequency * 2**(11/12), # B
+            QtCore.Qt.Key_K: base_frequency * 2           # C (nächste Oktave)
+        }
+
+        if key in key_mapping:
+            if key not in self.key_status or not self.key_status[key]:
+                signal_number = len([status for status in self.key_status.values() if status]) + 1
+                if signal_number <= len(self.signal_controls):
+                    self.set_frequency(signal_number, key_mapping[key])
+                    self.key_status[key] = True
+                    self.frequency_changed = True
+        elif key == QtCore.Qt.Key_Space:
+            if self.running:
+                self.stop()
+            else:
+                self.start()
+
+    def keyReleaseEvent(self, event):
+        key = event.key()
+        if key in self.key_status:
+            self.key_status[key] = False
+
+    def set_frequency(self, signal_number, frequency):
+        if signal_number in self.signal_controls:
+            self.signal_controls[signal_number]['frequency_slider'].setValue(frequency)
+            self.update_plot()
+
+    def get_octave_name(self, shift):
+        if 0 <= shift < len(self.octave_names):
+            return self.octave_names[shift]
+        else:
+            return f"{shift}"
+
     def add_signal_tab(self, signal_number):
         tab = QtWidgets.QWidget()
         control_layout = QtWidgets.QFormLayout()
@@ -110,7 +190,7 @@ class SineWaveApp(QtWidgets.QWidget):
 
         params = self.signal_parameters[signal_number]
 
-        self.create_slider_and_spinbox(control_layout, "Frequenz", signal_number, 'frequency', 10, 20000, 1, "Hz", 0, params['frequency'])
+        self.create_slider_and_spinbox(control_layout, "Frequenz", signal_number, 'frequency', 1, 20000, 1, "Hz", 0, params['frequency'])
         self.create_slider_and_spinbox(control_layout, "Phase", signal_number, 'phase_shift', 0, 360, 1, "°", 0, params.get('phase_shift', 0))
         self.create_slider_and_spinbox(control_layout, "AM Modulationsfrequenz", signal_number, 'mod_freq', 0.0, 50, 0.1, "Hz", 1, params['mod_freq'])
         self.create_slider_and_spinbox(control_layout, "AM Modulationstiefe", signal_number, 'mod_depth', 0.0, 1.0, 0.01, "", 2, params['mod_depth'])
@@ -413,8 +493,8 @@ class SineWaveApp(QtWidgets.QWidget):
     def create_default_signal_parameters(self, frequency=220.0):
         return {
             'frequency': frequency,
-            'mod_freq': 0.0,
-            'mod_depth': 0.0,
+            'mod_freq': 3.0,
+            'mod_depth': 0.5,
             'volume': 0.5,
             'pan': 0.5,
             'waveform': 'sine',
